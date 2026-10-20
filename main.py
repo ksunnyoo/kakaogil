@@ -1,315 +1,74 @@
-"""상속 길잡이 카카오 스킬 서버 (시연용)
+"""상속 길잡이 카카오 스킬 서버 v2 (문서 기준 정렬판)
 
-실행:  uv run uvicorn main:app --port 8000
-확인:  http://localhost:8000/  ->  {"status": "ok"}
-카카오 챗봇 관리자센터의 스킬 URL에는  https://<공개주소>/skill  을 등록합니다.
+실행:   uv run uvicorn main:app --port 8000
+필요:   uv add httpx
+확인:   GET /  ->  {"status": "ok"}
+카카오 스킬 URL:  https://<Render 주소>/skill
+
+문서 기준
+- 화면정의서 v1.4: K-01(관계·사망일·안심상속) -> K-02(기본 체크리스트) -> K-03(위험 질문 3개) -> 웹 링크
+- 결정 문서 Q21(관계 선택지), Q76~Q82(위험 질문), 개인정보 최종정책(로그 금지, 서버 메모리 일시 보관)
+
+환경변수 (모두 비어 있어도 서버는 동작하고, 백엔드 호출만 건너뜁니다)
+  STARTER_KIT_API_URL    백엔드 주소. 예: https://starter-kit.onrender.com
+  HANDOFF_SERVER_SECRET  서버끼리 쓰는 비밀값 (백엔드와 같은 값)
+  FRONTEND_ORIGIN        웹 주소. 예: https://starter-kit-web.onrender.com
+  HANDOFF_PATH           인계 토큰 발급 경로 (기본 /api/handoff, 협의 후 확정)
+  RECOMMEND_PATH         추천 API 경로 (기본 /api/checklist/recommend, 협의 후 확정)
+  HANDOFF_QUERY_KEY      웹 링크의 토큰 이름 (기본 handoff, 이정민 님과 협의)
+  DEATH_INPUT_MODE       date(기본, 날짜 입력) 또는 period(기간 버튼)
 """
+import os
 import re
+import time
+import datetime
 
+import httpx
 from fastapi import FastAPI, Request
 
 app = FastAPI(title="상속 길잡이 스킬 서버")
 
+STARTER_KIT_API_URL = os.getenv("STARTER_KIT_API_URL", "").rstrip("/")
+HANDOFF_SERVER_SECRET = os.getenv("HANDOFF_SERVER_SECRET", "")
+FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "").rstrip("/")
+HANDOFF_PATH = os.getenv("HANDOFF_PATH", "/api/handoff")
+RECOMMEND_PATH = os.getenv("RECOMMEND_PATH", "/api/checklist/recommend")
+HANDOFF_QUERY_KEY = os.getenv("HANDOFF_QUERY_KEY", "handoff")
+DEATH_INPUT_MODE = os.getenv("DEATH_INPUT_MODE", "date")
+
+SESSION_TTL = 1800      # 대화 중 답변을 서버 메모리에 보관하는 시간(초). 제안값, 정책 V01 확인 후 확정
+API_TIMEOUT = 3.0       # 카카오 응답 제한 5초 안에 끝내기 위한 백엔드 호출 제한(초)
+
+COMMON_WARNING = "주의: 기한·채무는 공식 자료로 확인하세요."
+LEGAL_NOTE = "법적 영향은 대한법률구조공단에 상담하세요."
+FALLBACK_TEXT = "아직 이해하지 못했어요. 아래 메뉴에서 골라 주세요.\n\n" + COMMON_WARNING
+ERROR_TEXT = "안내를 불러오지 못했습니다.\n\n" + COMMON_WARNING
+
 # ---------------------------------------------------------------
-# 대화 데이터: 웹 시연 페이지의 "블록 설계표"와 같은 내용입니다.
-# 문구를 고치려면 이 부분의 text, qr(바로가기 응답)만 수정하세요.
-# qr = [버튼 문구, 이동할 블록 키]
+# 1) 질문 선택지 (결정 문서 Q21, Q76, 화면정의서 K-01)
+# ---------------------------------------------------------------
+RELATIONS = [  # [버튼 문구, 백엔드로 보낼 값(제안)]
+    ["배우자", "spouse"],
+    ["자녀·손자녀", "child_grandchild"],
+    ["부모·조부모", "parent_grandparent"],
+    ["형제자매", "sibling"],
+    ["기타 친족", "other_relative"],
+    ["그 외·모름", "other_unknown"],
+]
+ONESTOP = [["신청함", "applied"], ["미신청", "not_applied"], ["모름", "unknown"]]
+PERIODS = [["1개월 이내", "within_1m"], ["1~3개월", "1_to_3m"], ["3개월 이상", "over_3m"]]
+YESNO = [["있음", "yes"], ["없음", "no"], ["모름", "unknown"]]
+RISKS = [  # [키, 버튼 문구, 질문 문장]
+    ["debtGuarantee", "채무·보증", "고인에게 채무나 보증이 있나요?"],
+    ["assetDisposal", "재산 처분·사용", "사망 후 고인의 재산이 처분되거나 사용된 사실을 알고 있나요?\n(본인이 아닌 다른 사람의 행동도 포함합니다)"],
+    ["ownApplication", "본인 신청", "본인이 상속포기 또는 한정승인을 신청했나요?\n(다른 상속인의 신청은 포함하지 않습니다)"],
+]
+
+# ---------------------------------------------------------------
+# 2) 안내 블록: 기존 시연용 문구. 검수된 문구로 교체 전까지 "시연용" 표시 유지
+#    qr = [버튼 문구, 이동할 블록 키]
 # ---------------------------------------------------------------
 NODES = {
-    "welcome": {
-        "name": "웰컴 블록",
-        "text": "안녕하세요. 상속 길잡이입니다.\n\n가족의 사망 이후 필요한 절차를 확인하도록 도와드리겠습니다.\n\n어떤 내용이 궁금하신가요?",
-        "qr": [
-            [
-                "상속 절차 시작",
-                "start"
-            ],
-            [
-                "기본 체크리스트",
-                "checklist"
-            ],
-            [
-                "금융·채무",
-                "finance"
-            ],
-            [
-                "상속세",
-                "tax"
-            ],
-            [
-                "통신·구독",
-                "telecom"
-            ],
-            [
-                "위험 행동 확인",
-                "risk"
-            ],
-            [
-                "법령·시행일 확인",
-                "law"
-            ]
-        ]
-    },
-    "start": {
-        "name": "관계 질문",
-        "text": "고인과 어떤 관계인가요?\n\n태아·사실혼·이혼·입양·외국인 등 예외가 걱정되면 '특수 상황 확인'을 눌러 주세요.",
-        "qr": [
-            [
-                "배우자",
-                "rel_spouse"
-            ],
-            [
-                "자녀",
-                "rel_child"
-            ],
-            [
-                "부모",
-                "rel_parent"
-            ],
-            [
-                "형제자매",
-                "rel_sibling"
-            ],
-            [
-                "기타",
-                "rel_other"
-            ],
-            [
-                "잘 모르겠어요",
-                "rel_unknown"
-            ],
-            [
-                "특수 상황 확인",
-                "sp"
-            ]
-        ]
-    },
-    "rel_spouse": {
-        "name": "관계_배우자",
-        "text": "배우자는 자녀(직계비속)가 있으면 자녀와, 없으면 부모(직계존속)와 함께 상속인이 됩니다. 둘 다 없으면 배우자 혼자 상속인입니다.\n\n고인이 돌아가신 지 얼마나 되었나요?",
-        "qr": [
-            [
-                "1개월 이내",
-                "d1"
-            ],
-            [
-                "1~3개월",
-                "d3"
-            ],
-            [
-                "3개월 이상",
-                "d6"
-            ],
-            [
-                "사망일 모름",
-                "d_unknown"
-            ],
-            [
-                "처음으로",
-                "welcome"
-            ]
-        ]
-    },
-    "rel_child": {
-        "name": "관계_자녀",
-        "text": "자녀(직계비속)는 1순위 상속인입니다. 배우자가 있으면 배우자와 함께 상속받습니다.\n\n고인이 돌아가신 지 얼마나 되었나요?",
-        "qr": [
-            [
-                "1개월 이내",
-                "d1"
-            ],
-            [
-                "1~3개월",
-                "d3"
-            ],
-            [
-                "3개월 이상",
-                "d6"
-            ],
-            [
-                "사망일 모름",
-                "d_unknown"
-            ],
-            [
-                "처음으로",
-                "welcome"
-            ]
-        ]
-    },
-    "rel_parent": {
-        "name": "관계_부모",
-        "text": "고인의 부모(직계존속)는 2순위입니다. 고인에게 자녀가 없을 때 상속인이 되며, 배우자가 있으면 함께 상속받습니다.\n\n고인이 돌아가신 지 얼마나 되었나요?",
-        "qr": [
-            [
-                "1개월 이내",
-                "d1"
-            ],
-            [
-                "1~3개월",
-                "d3"
-            ],
-            [
-                "3개월 이상",
-                "d6"
-            ],
-            [
-                "사망일 모름",
-                "d_unknown"
-            ],
-            [
-                "처음으로",
-                "welcome"
-            ]
-        ]
-    },
-    "rel_sibling": {
-        "name": "관계_형제자매",
-        "text": "형제자매는 3순위입니다. 고인에게 자녀와 부모가 없고 배우자도 없을 때 상속인이 됩니다.\n\n고인이 돌아가신 지 얼마나 되었나요?",
-        "qr": [
-            [
-                "1개월 이내",
-                "d1"
-            ],
-            [
-                "1~3개월",
-                "d3"
-            ],
-            [
-                "3개월 이상",
-                "d6"
-            ],
-            [
-                "사망일 모름",
-                "d_unknown"
-            ],
-            [
-                "처음으로",
-                "welcome"
-            ]
-        ]
-    },
-    "rel_other": {
-        "name": "관계_기타",
-        "text": "4촌 이내 방계혈족 등은 4순위입니다. 앞선 순위 상속인이 없을 때만 상속인이 됩니다. 정확한 순위는 가족관계증명서로 확인해 주세요.\n\n고인이 돌아가신 지 얼마나 되었나요?",
-        "qr": [
-            [
-                "1개월 이내",
-                "d1"
-            ],
-            [
-                "1~3개월",
-                "d3"
-            ],
-            [
-                "3개월 이상",
-                "d6"
-            ],
-            [
-                "사망일 모름",
-                "d_unknown"
-            ],
-            [
-                "처음으로",
-                "welcome"
-            ]
-        ]
-    },
-    "rel_unknown": {
-        "name": "관계_모름",
-        "text": "가족관계증명서와 기본증명서로 확인할 수 있습니다. 정부24나 주민센터에서 발급받을 수 있고, 발급 자격은 기관에서 확인해 주세요.\n\n고인이 돌아가신 지 얼마나 되었나요?",
-        "qr": [
-            [
-                "1개월 이내",
-                "d1"
-            ],
-            [
-                "1~3개월",
-                "d3"
-            ],
-            [
-                "3개월 이상",
-                "d6"
-            ],
-            [
-                "사망일 모름",
-                "d_unknown"
-            ],
-            [
-                "처음으로",
-                "welcome"
-            ]
-        ]
-    },
-    "d1": {
-        "name": "사망일_1개월이내",
-        "text": "주의: 기한·채무는 공식 자료로 확인하세요.\n\n사망 후 1개월 이내라면 사망신고 기한이 가장 가깝습니다. 사망신고 때 안심상속 원스톱 서비스를 함께 신청하면 금융·세금 정보를 한 번에 조회할 수 있습니다.\n\n안심상속 원스톱 서비스를 신청하셨나요?\n\n※ 시연용 안내입니다. 공식 기관에서 확인해 주세요.",
-        "qr": [
-            [
-                "안심상속 신청함",
-                "ins_done"
-            ],
-            [
-                "안심상속 아직",
-                "finance"
-            ],
-            [
-                "위험 행동 확인",
-                "risk"
-            ],
-            [
-                "처음으로",
-                "welcome"
-            ]
-        ]
-    },
-    "d3": {
-        "name": "사망일_1~3개월",
-        "text": "주의: 기한·채무는 공식 자료로 확인하세요.\n\n사망 후 1~3개월이라면 상속포기·한정승인 판단 기한이 다가옵니다. 먼저 재산과 빚을 조회하고, 판단 전에는 재산을 처분하지 마세요.\n\n안심상속 원스톱 서비스를 신청하셨나요?\n\n※ 시연용 안내입니다. 공식 기관에서 확인해 주세요.",
-        "qr": [
-            [
-                "안심상속 신청함",
-                "ins_done"
-            ],
-            [
-                "안심상속 아직",
-                "finance"
-            ],
-            [
-                "포기·한정승인 절차",
-                "proc"
-            ],
-            [
-                "위험 행동 확인",
-                "risk"
-            ],
-            [
-                "처음으로",
-                "welcome"
-            ]
-        ]
-    },
-    "d6": {
-        "name": "사망일_3개월이상",
-        "text": "주의: 기한·채무는 공식 자료로 확인하세요.\n\n사망 후 3개월이 지났어도 확인할 절차가 남아 있습니다. 상속세 신고와 상속등기를 먼저 확인하세요. 상속포기·한정승인은 기한 이후에 가능한 경우가 있어 전문가 상담을 권합니다.\n\n※ 시연용 안내입니다. 공식 기관에서 확인해 주세요.",
-        "qr": [
-            [
-                "상속세",
-                "tax"
-            ],
-            [
-                "포기·한정승인 절차",
-                "proc"
-            ],
-            [
-                "법령·시행일 확인",
-                "law"
-            ],
-            [
-                "처음으로",
-                "welcome"
-            ]
-        ]
-    },
     "finance": {
         "name": "금융·채무",
         "text": "주의: 기한·채무는 공식 자료로 확인하세요.\n\n안심상속 원스톱 서비스로 금융기관 예금·대출·보험, 국세·지방세, 자동차, 토지 정보를 한 번에 조회할 수 있습니다. 시·군·구청이나 주민센터, 정부24에서 신청합니다.\n\n※ 시연용 안내입니다. 공식 기관에서 확인해 주세요.",
@@ -364,24 +123,6 @@ NODES = {
             ]
         ]
     },
-    "risk": {
-        "name": "위험 행동 확인",
-        "text": "주의: 기한·채무는 공식 자료로 확인하세요.\n\n상속을 받을지 정하기 전에 고인의 재산을 쓰면 상속을 받아들인 것으로 볼 수 있습니다. 세 가지를 차례로 확인하겠습니다.\n\n1/3. 고인의 예금을 인출하거나 사용한 적이 있나요?",
-        "qr": [
-            [
-                "인출·사용 있음",
-                "risk_w1"
-            ],
-            [
-                "인출·사용 없음",
-                "risk_q2"
-            ],
-            [
-                "처음으로",
-                "welcome"
-            ]
-        ]
-    },
     "law": {
         "name": "법령·시행일 확인",
         "text": "상속 관련 법령은 개정될 수 있고, 이 시연 화면은 최신 법령을 조회하지 않습니다. 국가법령정보센터(law.go.kr)에서 현행 법령과 시행일을 확인하세요.\n\n※ 시연용 안내입니다. 공식 기관에서 확인해 주세요.",
@@ -393,32 +134,6 @@ NODES = {
             [
                 "위험 행동 확인",
                 "risk"
-            ],
-            [
-                "처음으로",
-                "welcome"
-            ]
-        ]
-    },
-    "period": {
-        "name": "사망 후 기간 질문",
-        "text": "고인의 사망일을 알고 있나요? 돌아가신 지 얼마나 되었는지 골라 주세요.",
-        "qr": [
-            [
-                "1개월 이내",
-                "d1"
-            ],
-            [
-                "1~3개월",
-                "d3"
-            ],
-            [
-                "3개월 이상",
-                "d6"
-            ],
-            [
-                "사망일 모름",
-                "d_unknown"
             ],
             [
                 "처음으로",
@@ -451,8 +166,8 @@ NODES = {
                 "sp_disq"
             ],
             [
-                "기간 확인",
-                "period"
+                "상속 절차 시작",
+                "start"
             ],
             [
                 "처음으로",
@@ -469,8 +184,8 @@ NODES = {
                 "sp"
             ],
             [
-                "기간 확인",
-                "period"
+                "상속 절차 시작",
+                "start"
             ],
             [
                 "처음으로",
@@ -487,8 +202,8 @@ NODES = {
                 "sp"
             ],
             [
-                "기간 확인",
-                "period"
+                "상속 절차 시작",
+                "start"
             ],
             [
                 "처음으로",
@@ -505,8 +220,8 @@ NODES = {
                 "sp"
             ],
             [
-                "기간 확인",
-                "period"
+                "상속 절차 시작",
+                "start"
             ],
             [
                 "처음으로",
@@ -523,8 +238,8 @@ NODES = {
                 "sp"
             ],
             [
-                "기간 확인",
-                "period"
+                "상속 절차 시작",
+                "start"
             ],
             [
                 "처음으로",
@@ -541,8 +256,8 @@ NODES = {
                 "sp"
             ],
             [
-                "기간 확인",
-                "period"
+                "상속 절차 시작",
+                "start"
             ],
             [
                 "처음으로",
@@ -550,14 +265,10 @@ NODES = {
             ]
         ]
     },
-    "d_unknown": {
-        "name": "사망일_모름",
-        "text": "주의: 기한·채무는 공식 자료로 확인하세요.\n\n사망일은 기본증명서·가족관계증명서에서 확인할 수 있습니다. 확인하기 전에는 기한이 가까울 수 있다고 보고 재산·채무 조사부터 시작하세요.\n\n※ 시연용 안내입니다. 공식 기관에서 확인해 주세요.",
+    "proc": {
+        "name": "절차 핵심 안내",
+        "text": "주의: 신청 가능 여부와 기한은 상황에 따라 다릅니다.\n\n상속포기·한정승인 핵심 절차\n1. 재산·채무 조사: 안심상속 원스톱 서비스로 금융·세금 정보를 확인합니다.\n2. 선택 판단: 그대로 받을지, 재산 범위 안에서만 빚을 갚을지(한정승인), 모두 포기할지 정합니다.\n3. 법원 신고: 상속이 시작된 것을 안 날부터 3개월 이내에 가정법원에 신고합니다.\n4. 기한이 지났다면 전문가 상담을 권합니다.\n\n※ 시연용 안내입니다. 공식 기관에서 확인해 주세요.",
         "qr": [
-            [
-                "기본 체크리스트",
-                "checklist"
-            ],
             [
                 "금융·채무",
                 "finance"
@@ -565,24 +276,6 @@ NODES = {
             [
                 "위험 행동 확인",
                 "risk"
-            ],
-            [
-                "처음으로",
-                "welcome"
-            ]
-        ]
-    },
-    "ins_done": {
-        "name": "안심상속_신청함",
-        "text": "신청하셨다면 조회 결과를 먼저 확인하세요. 결과에서 확인한 재산과 채무의 규모로 상속을 받을지, 한정승인이나 포기를 할지 판단합니다.\n\n※ 시연용 안내입니다. 공식 기관에서 확인해 주세요.",
-        "qr": [
-            [
-                "포기·한정승인 절차",
-                "proc"
-            ],
-            [
-                "상속세",
-                "tax"
             ],
             [
                 "처음으로",
@@ -615,152 +308,24 @@ NODES = {
                 "welcome"
             ]
         ]
-    },
-    "proc": {
-        "name": "절차 핵심 안내",
-        "text": "주의: 신청 가능 여부와 기한은 상황에 따라 다릅니다.\n\n상속포기·한정승인 핵심 절차\n1. 재산·채무 조사: 안심상속 원스톱 서비스로 금융·세금 정보를 확인합니다.\n2. 선택 판단: 그대로 받을지, 재산 범위 안에서만 빚을 갚을지(한정승인), 모두 포기할지 정합니다.\n3. 법원 신고: 상속이 시작된 것을 안 날부터 3개월 이내에 가정법원에 신고합니다.\n4. 기한이 지났다면 전문가 상담을 권합니다.\n\n※ 시연용 안내입니다. 공식 기관에서 확인해 주세요.",
-        "qr": [
-            [
-                "금융·채무",
-                "finance"
-            ],
-            [
-                "위험 행동 확인",
-                "risk"
-            ],
-            [
-                "처음으로",
-                "welcome"
-            ]
-        ]
-    },
-    "risk_q2": {
-        "name": "위험질문2",
-        "text": "2/3. 고인의 부동산·자동차 등 재산을 팔거나 명의를 바꾸는 등 처분한 적이 있나요?",
-        "qr": [
-            [
-                "처분 있음",
-                "risk_w2"
-            ],
-            [
-                "처분 없음",
-                "risk_q3"
-            ],
-            [
-                "처음으로",
-                "welcome"
-            ]
-        ]
-    },
-    "risk_q3": {
-        "name": "위험질문3",
-        "text": "3/3. 고인의 빚을 대신 갚은 적이 있나요?",
-        "qr": [
-            [
-                "변제 있음",
-                "risk_w3"
-            ],
-            [
-                "변제 없음",
-                "risk_ok"
-            ],
-            [
-                "처음으로",
-                "welcome"
-            ]
-        ]
-    },
-    "risk_w1": {
-        "name": "위험안내_인출",
-        "text": "주의: 상속을 받을지 정하기 전에 고인의 예금을 인출해 쓰면 상속을 받아들인 것(단순승인)으로 볼 수 있습니다. 장례비처럼 꼭 필요한 지출이었다면 상속포기·한정승인에 영향이 있는지 전문가에게 확인하세요.\n\n법적 영향은 대한법률구조공단에 상담하세요.\n\n※ 시연용 안내입니다. 공식 기관에서 확인해 주세요.",
-        "qr": [
-            [
-                "재산 처분도 확인",
-                "risk_q2"
-            ],
-            [
-                "포기·한정승인 절차",
-                "proc"
-            ],
-            [
-                "처음으로",
-                "welcome"
-            ]
-        ]
-    },
-    "risk_w2": {
-        "name": "위험안내_처분",
-        "text": "주의: 고인의 재산을 처분하면 상속을 받아들인 것(단순승인)으로 볼 수 있습니다. 이미 처분했다면 상속포기·한정승인이 가능한지 전문가에게 확인하세요.\n\n법적 영향은 대한법률구조공단에 상담하세요.\n\n※ 시연용 안내입니다. 공식 기관에서 확인해 주세요.",
-        "qr": [
-            [
-                "빚 변제도 확인",
-                "risk_q3"
-            ],
-            [
-                "포기·한정승인 절차",
-                "proc"
-            ],
-            [
-                "처음으로",
-                "welcome"
-            ]
-        ]
-    },
-    "risk_w3": {
-        "name": "위험안내_변제",
-        "text": "주의: 상속을 받을지 정하기 전에 고인의 빚을 대신 갚으면 상속을 받아들인 것으로 볼 수 있습니다. 상황에 따라 다르니 이미 갚았다면 전문가에게 확인하세요.\n\n법적 영향은 대한법률구조공단에 상담하세요.\n\n※ 시연용 안내입니다. 공식 기관에서 확인해 주세요.",
-        "qr": [
-            [
-                "포기·한정승인 절차",
-                "proc"
-            ],
-            [
-                "법령·시행일 확인",
-                "law"
-            ],
-            [
-                "처음으로",
-                "welcome"
-            ]
-        ]
-    },
-    "risk_ok": {
-        "name": "위험안내_해당없음",
-        "text": "주의: 기한·채무는 공식 자료로 확인하세요.\n\n세 질문 모두 '없음'이라면 지금까지는 상속을 받아들인 것으로 볼 행동이 확인되지 않았습니다. 상속을 받을지 정하기 전까지는 고인의 재산을 쓰거나 처분하지 마세요.\n\n법적 영향은 대한법률구조공단에 상담하세요.\n\n※ 시연용 안내입니다. 공식 기관에서 확인해 주세요.",
-        "qr": [
-            [
-                "포기·한정승인 절차",
-                "proc"
-            ],
-            [
-                "금융·채무",
-                "finance"
-            ],
-            [
-                "법령·시행일 확인",
-                "law"
-            ],
-            [
-                "처음으로",
-                "welcome"
-            ]
-        ]
     }
 }
 
+NODES["welcome"] = {
+    "name": "웰컴 블록",
+    "text": "안녕하세요. 상속 길잡이입니다.\n\n가족의 사망 이후 필요한 절차를 확인하도록 도와드리겠습니다.\n\n어떤 내용이 궁금하신가요?",
+    "qr": [["상속 절차 시작", "start"], ["기본 체크리스트", "checklist"], ["금융·채무", "finance"],
+           ["상속세", "tax"], ["통신·구독", "telecom"], ["위험 행동 확인", "risk"], ["법령·시행일 확인", "law"]],
+}
 HOME = "welcome"
-FALLBACK_TEXT = "아직 이해하지 못했어요. 아래 메뉴에서 골라 주세요.\n\n주의: 기한·채무는 공식 자료로 확인하세요."
-ERROR_TEXT = "안내를 불러오지 못했습니다.\n\n주의: 기한·채무는 공식 자료로 확인하세요."
 
 
 def norm(text: str) -> str:
     return re.sub(r"[\s·.,!?~\-_/()\[\]'\"]", "", text).lower()
 
 
-# 버튼 문구 -> 이동할 블록
 LABELS = {norm(label): target for node in NODES.values() for label, target in node["qr"]}
 
-# 직접 입력한 문장을 연결하는 키워드 (위에서부터 먼저 맞는 것)
 KEYWORDS = [
     (re.compile(r"포기|한정승인|한정"), "proc"),
     (re.compile(r"체크리스트|할\s*일|순서"), "checklist"),
@@ -785,23 +350,268 @@ def find_node(utterance: str):
     if node_id is None:
         for pattern, target in KEYWORDS:
             if pattern.search(utterance):
-                node_id = target
-                break
+                return target
     return node_id
 
 
-def build(text: str, qr: list) -> dict:
-    """카카오 스킬 응답 JSON (version 2.0)을 만듭니다."""
+# ---------------------------------------------------------------
+# 3) 대화 중 답변 보관 (서버 메모리에만, 일정 시간 뒤 삭제, 로그에 남기지 않음)
+# ---------------------------------------------------------------
+SESSIONS = {}
+
+
+def get_session(uid: str) -> dict:
+    now = time.time()
+    for key in [k for k, v in SESSIONS.items() if now - v["ts"] > SESSION_TTL]:
+        del SESSIONS[key]
+    s = SESSIONS.get(uid)
+    if s is None:
+        s = {"step": None, "answers": {"riskAnswers": {}}, "ts": now}
+        SESSIONS[uid] = s
+    s["ts"] = now
+    return s
+
+
+def reset(s: dict):
+    s["step"] = None
+    s["answers"] = {"riskAnswers": {}}
+
+
+# ---------------------------------------------------------------
+# 4) 응답 만들기
+# ---------------------------------------------------------------
+def reply(text, labels, link=None):
+    return {"text": text, "qr": labels, "link": link}
+
+
+def node_reply(node_id):
+    node = NODES[node_id]
+    return reply(node["text"], [q[0] for q in node["qr"]])
+
+
+def build(res: dict) -> dict:
+    outputs = [{"simpleText": {"text": res["text"]}}]
+    if res.get("link"):
+        label, url = res["link"]
+        outputs.append({"textCard": {
+            "title": "웹 체크리스트",
+            "description": "카카오톡에서 답한 내용을 웹에서 이어서 볼 수 있어요.",
+            "buttons": [{"action": "webLink", "label": label, "webLinkUrl": url}],
+        }})
     return {
         "version": "2.0",
         "template": {
-            "outputs": [{"simpleText": {"text": text}}],
-            "quickReplies": [
-                {"label": label, "action": "message", "messageText": label}
-                for label, _target in qr
-            ],
+            "outputs": outputs,
+            "quickReplies": [{"label": l, "action": "message", "messageText": l} for l in res["qr"][:10]],
         },
     }
+
+
+# ---------------------------------------------------------------
+# 5) 질문 단계 (K-01 -> K-02 -> K-03)
+# ---------------------------------------------------------------
+def parse_date(text: str):
+    """'2026-09-30', '2026.9.30', '20260930', '2026년 9월 30일' 형태를 날짜로 바꿉니다."""
+    m = re.search(r"(\d{4})\D{0,3}(\d{1,2})\D{0,3}(\d{1,2})", text)
+    if not m:
+        return None
+    try:
+        d = datetime.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    except ValueError:
+        return None
+    if d > datetime.date.today() or d.year < 1900:
+        return None
+    return d.isoformat()
+
+
+def pick(options, text):
+    key = norm(text)
+    for label, value in options:
+        if norm(label) == key:
+            return value
+    return None
+
+
+def ask_relation():
+    return reply("고인과 어떤 관계인가요?\n\n(1/3)", [r[0] for r in RELATIONS] + ["처음으로"])
+
+
+def ask_death():
+    if DEATH_INPUT_MODE == "period":
+        return reply("고인이 돌아가신 지 얼마나 되었나요?\n\n(2/3)", [p[0] for p in PERIODS] + ["사망일 모름", "처음으로"])
+    return reply("고인의 사망일을 알려 주세요.\n예) 2026-09-30\n\n모르면 '모름'을 눌러 주세요.\n\n(2/3)", ["모름", "처음으로"])
+
+
+def ask_onestop():
+    return reply("안심상속 원스톱 서비스를 신청하셨나요?\n\n(3/3)", [o[0] for o in ONESTOP] + ["처음으로"])
+
+
+def risk_menu(s):
+    done = s["answers"]["riskAnswers"]
+    lines = ["추가 위험 확인은 선택입니다. 궁금한 질문만 골라서 답해도 되고, 답하지 않아도 체크리스트는 이용할 수 있어요.\n"]
+    for key, label, _q in RISKS:
+        lines.append(f"· {label}: {'답함' if key in done else '아직 안 함'}")
+    lines.append("\n" + COMMON_WARNING)
+    return reply("\n".join(lines), [r[1] for r in RISKS] + ["웹 체크리스트에서 보기", "처음으로"])
+
+
+def risk_answer_text(key, value):
+    if key == "assetDisposal":
+        if value == "no":
+            return "'없음'으로 기록했어요. 상속을 정하기 전에는 고인의 재산을 쓰거나 처분하지 않도록 주의하세요.\n\n" + LEGAL_NOTE
+        # TODO: 검수된 응답별 문구(이정민 님 원고)로 교체. 답변만으로 법적 효과를 판단하지 않음(Q78, Q79)
+        return ("재산이 처분되거나 사용된 사실은 상속을 어떻게 정할지에 영향을 줄 수 있어요. "
+                "이 답변만으로 법적 결과를 판단하지는 않아요.\n\n" + COMMON_WARNING + "\n" + LEGAL_NOTE)
+    # 채무·보증, 본인 신청은 응답별 문구가 아직 정해지지 않음(Q82 보류): 공통 위험 경고만 표시
+    return COMMON_WARNING + "\n" + LEGAL_NOTE
+
+
+async def call_backend(path, payload, secret=False):
+    if not STARTER_KIT_API_URL:
+        return None
+    headers = {"X-Handoff-Secret": HANDOFF_SERVER_SECRET} if secret else {}
+    try:
+        async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
+            r = await client.post(STARTER_KIT_API_URL + path, json=payload, headers=headers)
+        if r.status_code == 200:
+            return r.json()
+        print(f"[backend] {path} status={r.status_code}", flush=True)
+    except Exception as e:
+        print(f"[backend] {path} error={type(e).__name__}", flush=True)
+    return None
+
+
+async def show_result(s):
+    a = s["answers"]
+    data = await call_backend(RECOMMEND_PATH, a)
+    labels = ["추가 위험 확인", "웹 체크리스트에서 보기", "기본 체크리스트", "처음으로"]
+    recs = (data or {}).get("recommendations") if isinstance(data, dict) else None
+    if recs:
+        # TODO: 응답 필드 이름은 김현주 님과 확정 후 맞춤
+        lines = [COMMON_WARNING, "", "먼저 확인하면 좋은 절차예요."]
+        for i, r in enumerate(recs[:5], 1):
+            title = r.get("title") or r.get("procedureName") or r.get("procedureId") or "절차"
+            why = r.get("reason", "")
+            lines.append(f"{i}. {title}" + (f" - {why}" if why else ""))
+        return reply("\n".join(lines), labels)
+    # 백엔드 추천이 아직 없을 때: 임시 기본 체크리스트
+    return reply(NODES["checklist"]["text"], labels)
+
+
+async def web_link(s):
+    """K-02·K-03의 [웹 체크리스트에서 보기]: 누른 시점에 인계 토큰을 발급합니다(10분·1회)."""
+    if not FRONTEND_ORIGIN:
+        return reply("웹 주소가 아직 설정되지 않았습니다.\n\n" + COMMON_WARNING, ["처음으로"])
+    data = await call_backend(HANDOFF_PATH, s["answers"], secret=True)
+    token = (data or {}).get("token") if isinstance(data, dict) else None
+    if token:
+        url = f"{FRONTEND_ORIGIN}/?{HANDOFF_QUERY_KEY}={token}"
+        return reply("아래 버튼을 누르면 웹에서 같은 답으로 이어서 볼 수 있어요. 링크는 10분 동안, 한 번만 열려요.",
+                     ["처음으로"], link=("웹 체크리스트에서 보기", url))
+    # D-15: 연결 실패 시 웹은 처음부터 시작
+    return reply("답변을 웹으로 넘기지 못했어요. 웹에서는 처음부터 시작해 주세요.",
+                 ["다시 시도", "처음으로"], link=("웹에서 시작하기", FRONTEND_ORIGIN))
+
+
+def prompt_current(s):
+    step = s["step"]
+    if step == "relation":
+        return ask_relation()
+    if step == "death":
+        return ask_death()
+    if step == "onestop":
+        return ask_onestop()
+    if isinstance(step, str) and step.startswith("risk:"):
+        key = step.split(":", 1)[1]
+        q = next(r for r in RISKS if r[0] == key)
+        return reply(q[2], [y[0] for y in YESNO] + ["다른 질문 확인"])
+    return node_reply(HOME)
+
+
+async def handle(s: dict, utterance: str, block_name: str):
+    key = norm(utterance)
+
+    # 처음으로 / 웰컴 블록 첫 진입
+    if "웰컴" in block_name or key in ("처음으로", "처음", "메뉴", "홈"):
+        reset(s)
+        return node_reply(HOME), "welcome"
+    if key == norm("다시 시도"):
+        if s["step"] is None and s["answers"].get("relation"):
+            return await web_link(s), "retry_link"
+        return prompt_current(s), "retry"
+
+    step = s["step"]
+
+    # --- K-01 질문 3개 ---
+    if step == "relation":
+        value = pick(RELATIONS, utterance)
+        if value:
+            s["answers"]["relation"] = value
+            s["step"] = "death"
+            return ask_death(), "death"
+        return ask_relation(), "relation_again"
+
+    if step == "death":
+        if key == "모름" or key == norm("사망일 모름"):
+            s["answers"]["deathDate"] = None
+            s["answers"]["deathDateUnknown"] = True
+        elif DEATH_INPUT_MODE == "period" and pick(PERIODS, utterance):
+            s["answers"]["deathDate"] = None
+            s["answers"]["deathDateUnknown"] = False
+            s["answers"]["deathPeriod"] = pick(PERIODS, utterance)
+        else:
+            d = parse_date(utterance) if DEATH_INPUT_MODE == "date" else None
+            if not d:
+                return reply("날짜를 읽지 못했어요. 2026-09-30처럼 입력하거나 '모름'을 눌러 주세요.", ["모름", "처음으로"]), "death_again"
+            s["answers"]["deathDate"] = d
+            s["answers"]["deathDateUnknown"] = False
+        s["step"] = "onestop"
+        return ask_onestop(), "onestop"
+
+    if step == "onestop":
+        value = pick(ONESTOP, utterance)
+        if value:
+            s["answers"]["oneStopStatus"] = value
+            s["step"] = "result"
+            return await show_result(s), "result"
+        return ask_onestop(), "onestop_again"
+
+    # --- K-03 위험 질문 (각각 골라서 답함, 순서 없음: Q81) ---
+    if isinstance(step, str) and step.startswith("risk:"):
+        rkey = step.split(":", 1)[1]
+        value = pick(YESNO, utterance)
+        if value:
+            s["answers"]["riskAnswers"][rkey] = value
+            s["step"] = "result"
+            return reply(risk_answer_text(rkey, value), ["다른 질문 확인", "웹 체크리스트에서 보기", "처음으로"]), "risk_answered"
+        if key == norm("다른 질문 확인"):
+            s["step"] = "result"
+            return risk_menu(s), "risk_menu"
+        return prompt_current(s), "risk_again"
+
+    # --- 단계 밖 버튼 ---
+    if key in (norm("추가 위험 확인"), norm("다른 질문 확인")):
+        s["step"] = "result" if s["answers"].get("relation") else None
+        return risk_menu(s), "risk_menu"
+    for rkey, label, _q in RISKS:
+        if key == norm(label):
+            s["step"] = f"risk:{rkey}"
+            return prompt_current(s), "risk_question"
+    if key == norm("웹 체크리스트에서 보기"):
+        if not s["answers"].get("relation"):
+            return reply("먼저 질문 3개에 답하면 웹으로 이어서 볼 수 있어요.", ["상속 절차 시작", "처음으로"]), "link_need_answers"
+        return await web_link(s), "link"
+
+    node_id = find_node(utterance)
+    if node_id == "start":
+        reset(s)
+        s["step"] = "relation"
+        return ask_relation(), "start"
+    if node_id == "risk":
+        return risk_menu(s), "risk_menu"
+    if node_id is None:
+        return reply(FALLBACK_TEXT, [q[0] for q in NODES[HOME]["qr"]]), "fallback"
+    return node_reply(node_id), node_id
 
 
 @app.get("/")
@@ -816,15 +626,14 @@ async def skill(request: Request):
         user_request = body.get("userRequest") or {}
         utterance = (user_request.get("utterance") or "").strip()
         block_name = (user_request.get("block") or {}).get("name", "")
-
-        # 웰컴 블록으로 들어온 첫 진입은 인사말을 돌려줍니다.
-        node_id = HOME if "웰컴" in block_name else find_node(utterance)
-        print(f"[skill] block={block_name!r} utterance={utterance!r} -> {node_id}", flush=True)
-
-        if node_id is None:
-            return build(FALLBACK_TEXT, NODES[HOME]["qr"])
-        node = NODES[node_id]
-        return build(node["text"], node["qr"])
+        uid = (user_request.get("user") or {}).get("id", "") or "anonymous"
+        s = get_session(uid)
+        res, tag = await handle(s, utterance, block_name)
+        # 개인정보 정책: 사용자 입력 문장·식별값·답변 값은 로그에 남기지 않고 단계 이름만 남깁니다.
+        print(f"[skill] step={s['step']} node={tag}", flush=True)
+        return build(res)
     except Exception as e:  # 오류가 나도 안전한 안내를 돌려줍니다.
-        print(f"[skill] ERROR {e!r}", flush=True)
-        return build(ERROR_TEXT, [["처음으로", HOME]])
+        print(f"[skill] ERROR {type(e).__name__}", flush=True)
+        fallback = reply(ERROR_TEXT, ["다시 시도", "처음으로"],
+                         link=("웹에서 시작하기", FRONTEND_ORIGIN) if FRONTEND_ORIGIN else None)
+        return build(fallback)
