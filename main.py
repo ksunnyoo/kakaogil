@@ -17,6 +17,7 @@
   RECOMMEND_PATH         추천 API 경로 (기본 /api/checklist/recommend, 협의 후 확정)
   HANDOFF_QUERY_KEY      웹 링크의 토큰 이름 (기본 handoff, 이정민 님과 협의)
   DEATH_INPUT_MODE       date(기본, 날짜 입력) 또는 period(기간 버튼)
+  USE_RECOMMEND          1이면 백엔드 추천 API 호출(기본 0: 제외됨, 고정 기본 체크리스트 표시)
 """
 import os
 import re
@@ -34,7 +35,9 @@ FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "").rstrip("/")
 HANDOFF_PATH = os.getenv("HANDOFF_PATH", "/api/handoff")
 RECOMMEND_PATH = os.getenv("RECOMMEND_PATH", "/api/checklist/recommend")
 HANDOFF_QUERY_KEY = os.getenv("HANDOFF_QUERY_KEY", "handoff")
+HANDOFF_WEB_PATH = os.getenv("HANDOFF_WEB_PATH", "/checklist")  # 2차 회의(10/20) 이정민 님 확정: /checklist?handoff=<token>
 DEATH_INPUT_MODE = os.getenv("DEATH_INPUT_MODE", "date")
+USE_RECOMMEND = os.getenv("USE_RECOMMEND", "0") == "1"  # 추천 API는 1차 회의에서 제외. 되살릴 때만 1
 
 SESSION_TTL = 1800      # 대화 중 답변을 서버 메모리에 보관하는 시간(초). 제안값, 정책 V01 확인 후 확정
 API_TIMEOUT = 3.0       # 카카오 응답 제한 5초 안에 끝내기 위한 백엔드 호출 제한(초)
@@ -47,21 +50,21 @@ ERROR_TEXT = "안내를 불러오지 못했습니다.\n\n" + COMMON_WARNING
 # ---------------------------------------------------------------
 # 1) 질문 선택지 (결정 문서 Q21, Q76, 화면정의서 K-01)
 # ---------------------------------------------------------------
-RELATIONS = [  # [버튼 문구, 백엔드로 보낼 값(제안)]
+RELATIONS = [  # [버튼 문구, 백엔드로 보낼 값(팀 코드 contracts/domain.py Relationship 기준)]
     ["배우자", "spouse"],
-    ["자녀·손자녀", "child_grandchild"],
-    ["부모·조부모", "parent_grandparent"],
+    ["자녀·손자녀", "descendant"],
+    ["부모·조부모", "ascendant"],
     ["형제자매", "sibling"],
-    ["기타 친족", "other_relative"],
-    ["그 외·모름", "other_unknown"],
+    ["기타 친족", "other"],
+    ["그 외·모름", "unknown"],
 ]
-ONESTOP = [["신청함", "applied"], ["미신청", "not_applied"], ["모름", "unknown"]]
+ONESTOP = [["신청함", "yes"], ["미신청", "no"], ["모름", "unknown"]]  # 팀 코드(contracts/domain.py) AnswerChoice
 PERIODS = [["1개월 이내", "within_1m"], ["1~3개월", "1_to_3m"], ["3개월 이상", "over_3m"]]
 YESNO = [["있음", "yes"], ["없음", "no"], ["모름", "unknown"]]
 RISKS = [  # [키, 버튼 문구, 질문 문장]
-    ["debtGuarantee", "채무·보증", "고인에게 채무나 보증이 있나요?"],
-    ["assetDisposal", "재산 처분·사용", "사망 후 고인의 재산이 처분되거나 사용된 사실을 알고 있나요?\n(본인이 아닌 다른 사람의 행동도 포함합니다)"],
-    ["ownApplication", "본인 신청", "본인이 상속포기 또는 한정승인을 신청했나요?\n(다른 상속인의 신청은 포함하지 않습니다)"],
+    ["debt", "채무·보증", "고인에게 채무나 보증이 있나요?"],
+    ["property_disposal", "재산 처분·사용", "사망 후 고인의 재산이 처분되거나 사용된 사실을 알고 있나요?\n(본인이 아닌 다른 사람의 행동도 포함합니다)"],
+    ["self_application", "본인 신청", "본인이 상속포기 또는 한정승인을 신청했나요?\n(다른 상속인의 신청은 포함하지 않습니다)"],
 ]
 
 # ---------------------------------------------------------------
@@ -456,7 +459,7 @@ def risk_menu(s):
 
 
 def risk_answer_text(key, value):
-    if key == "assetDisposal":
+    if key == "property_disposal":
         if value == "no":
             return "'없음'으로 기록했어요. 상속을 정하기 전에는 고인의 재산을 쓰거나 처분하지 않도록 주의하세요.\n\n" + LEGAL_NOTE
         # TODO: 검수된 응답별 문구(이정민 님 원고)로 교체. 답변만으로 법적 효과를 판단하지 않음(Q78, Q79)
@@ -483,7 +486,7 @@ async def call_backend(path, payload, secret=False):
 
 async def show_result(s):
     a = s["answers"]
-    data = await call_backend(RECOMMEND_PATH, a)
+    data = await call_backend(RECOMMEND_PATH, a) if USE_RECOMMEND else None
     labels = ["추가 위험 확인", "웹 체크리스트에서 보기", "기본 체크리스트", "처음으로"]
     recs = (data or {}).get("recommendations") if isinstance(data, dict) else None
     if recs:
@@ -498,14 +501,25 @@ async def show_result(s):
     return reply(NODES["checklist"]["text"], labels)
 
 
+def handoff_body(a):
+    """카카오 답변을 팀 계약(InitialAnswers·RiskAnswer, JSON 이름은 camelCase 제안)으로 바꿉니다."""
+    return {
+        "relationship": a.get("relation"),
+        "deathDate": a.get("deathDate"),
+        "deathDateUnknown": bool(a.get("deathDateUnknown")),
+        "oneStopApplication": a.get("oneStopStatus"),
+        "risks": [{"riskId": k, "answer": v} for k, v in (a.get("riskAnswers") or {}).items()],
+    }
+
+
 async def web_link(s):
     """K-02·K-03의 [웹 체크리스트에서 보기]: 누른 시점에 인계 토큰을 발급합니다(10분·1회)."""
     if not FRONTEND_ORIGIN:
         return reply("웹 주소가 아직 설정되지 않았습니다.\n\n" + COMMON_WARNING, ["처음으로"])
-    data = await call_backend(HANDOFF_PATH, s["answers"], secret=True)
+    data = await call_backend(HANDOFF_PATH, handoff_body(s["answers"]), secret=True)
     token = (data or {}).get("token") if isinstance(data, dict) else None
     if token:
-        url = f"{FRONTEND_ORIGIN}/?{HANDOFF_QUERY_KEY}={token}"
+        url = f"{FRONTEND_ORIGIN}{HANDOFF_WEB_PATH}?{HANDOFF_QUERY_KEY}={token}"
         return reply("아래 버튼을 누르면 웹에서 같은 답으로 이어서 볼 수 있어요. 링크는 10분 동안, 한 번만 열려요.",
                      ["처음으로"], link=("웹 체크리스트에서 보기", url))
     # D-15: 연결 실패 시 웹은 처음부터 시작
