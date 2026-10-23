@@ -488,15 +488,19 @@ def risk_menu(s):
     return reply("\n".join(lines), [r[1] for r in RISKS] + ["웹 체크리스트에서 보기", "처음으로"])
 
 
+# W01~W03: 김현주 백엔드 checklist/rules.py WARNING_TEXTS(Q98 승인 문구)와 같은 문구. 문구를 바꿀 때는 백엔드와 먼저 맞춘다.
+WARNING_TEXTS = {
+    "debt": "고인의 재산·채무를 확인할 수 있는 공식 조회 방법을 살펴보세요. 본인의 채무 부담 여부는 대한법률구조공단에 상담하세요.",
+    "property_disposal": "사망 후 고인의 재산이 처분되거나 사용됐다면 누가, 언제, 무엇을 했는지 확인하세요. 법적 영향은 대한법률구조공단에 상담하세요.",
+    "self_application": "본인에 관한 상속포기·한정승인 신고 여부와 법원 처리 상태를 확인하세요. 신고의 법적 효력에 관한 상담은 대한법률구조공단을 이용하세요.",
+}
+
+
 def risk_answer_text(key, value):
-    if key == "property_disposal":
-        if value == "no":
-            return "'없음'으로 기록했어요. 상속을 정하기 전에는 고인의 재산을 쓰거나 처분하지 않도록 주의하세요.\n\n" + LEGAL_NOTE
-        # TODO: 검수된 응답별 문구(이정민 님 원고)로 교체. 답변만으로 법적 효과를 판단하지 않음(Q78, Q79)
-        return ("재산이 처분되거나 사용된 사실은 상속을 어떻게 정할지에 영향을 줄 수 있어요. "
-                "이 답변만으로 법적 결과를 판단하지는 않아요.\n\n" + COMMON_WARNING + "\n" + LEGAL_NOTE)
-    # 채무·보증, 본인 신청은 응답별 문구가 아직 정해지지 않음(Q82 보류): 공통 위험 경고만 표시
-    return COMMON_WARNING + "\n" + LEGAL_NOTE
+    """B안: 있음·모름 -> 해당 경고(W01~W03) + 공통 경고(W00), 없음 -> 공통 경고(W00)만."""
+    if value in ("yes", "unknown") and key in WARNING_TEXTS:
+        return WARNING_TEXTS[key] + "\n\n" + COMMON_WARNING
+    return COMMON_WARNING
 
 
 async def call_backend(path, payload, secret=False):
