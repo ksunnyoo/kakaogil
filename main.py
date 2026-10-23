@@ -50,6 +50,25 @@ DISCLAIMER_FULL = ("이 서비스는 법률 자문이나 변호사 상담을 대
                    "개별 사안의 판단은 대한법률구조공단 등 전문가에게 상담하세요.")
 DISCLAIMER_SHORT = "※ 법률 자문·변호사 상담을 대체하지 않는 일반 안내입니다."
 
+
+# 공식 링크 (선 님이 지정한 주소). 바꿀 때는 이 곳만 고친다.
+URL_ONESTOP = "https://www.gov.kr/mw/AA020InfoCappView.do?CappBizCD=17400000001"
+URL_FSS = "https://www.fss.or.kr/fss/cvpl/inhCerEc/main.do?menuNo=200010"
+URL_EASYLAW = "https://easylaw.go.kr/CSP/CnpClsMain.laf?popMenu=ov&csmSeq=255&ccfNo=4&cciNo=1&cnpClsNo=1"
+URL_NTS_GENERAL = "https://www.nts.go.kr/nts/na/ntt/selectNttInfo.do?nttSn=1346289&mi=40256"
+URL_NTS_OVERVIEW = "https://www.nts.go.kr/nts/cm/cntnts/cntntsView.do?mi=2324&cntntsId=7718"
+URL_HOMETAX = "https://hometax.go.kr/websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml&tmIdx=41&tm2lIdx=4108000000&tm3lIdx=4108010000"
+LINK_DESC = "공식 기관 페이지에서 직접 확인하세요."
+URL_FAMILY_REL = "https://efamily.scourt.go.kr/pt/PtFrrpApplrInfoInqW.do?menuFg=02&authFg=&agreeNext=undefined&errorCode=&firstAuth=N"
+URL_DEATH_REPORT = "https://www.gov.kr/mw/AA020InfoCappView.do?CappBizCD=12700000059"
+URL_ONESTOP_PORTAL = "https://www.gov.kr/portal/onestopSvc/safeInheritance"
+URL_CIVIL = "https://law.go.kr/LSW/lsInfoP.do?lsiSeq=284415#0000"
+URL_EASY_SHARE = "https://easylaw.go.kr/CSP/CnpClsMain.laf?popMenu=ov&csmSeq=255&ccfNo=3&cciNo=2&cnpClsNo=2"
+URL_EASY_EFFECT = "https://easylaw.go.kr/CSP/CnpClsMain.laf?popMenu=ov&csmSeq=255&ccfNo=3&cciNo=1&cnpClsNo=1"
+URL_EASY_RESERVE = "https://www.easylaw.go.kr/CSP/CnpClsMain.laf?csmSeq=255&ccfNo=6&cciNo=1&cnpClsNo=1"
+URL_SKT_DOCS = "https://m.tworld.co.kr/customer/document"
+URL_KT_GUIDE = "https://help.kt.com/serviceinfo/ServiceCloseGuideL1.do"
+
 FALLBACK_TEXT = "아직 이해하지 못했어요. 아래 메뉴에서 골라 주세요.\n\n" + COMMON_WARNING
 ERROR_TEXT = "안내를 불러오지 못했습니다.\n\n" + COMMON_WARNING
 
@@ -98,13 +117,14 @@ def procedure_detail(utterance):
 
 
 # ---------------------------------------------------------------
-# 2) 안내 블록: 기존 시연용 문구. 검수된 문구로 교체 전까지 "시연용" 표시 유지
+# 2) 안내 블록: 검수 전 안내 문구. 검수된 문구로 교체하면서 링크도 함께 설정한다
 #    qr = [버튼 문구, 이동할 블록 키]
 # ---------------------------------------------------------------
 NODES = {
     "finance": {
         "name": "금융·채무",
-        "text": "주의: 기한·채무는 공식 자료로 확인하세요.\n\n안심상속 원스톱 서비스로 금융기관 예금·대출·보험, 국세·지방세, 자동차, 토지 정보를 한 번에 조회할 수 있습니다. 시·군·구청이나 주민센터, 정부24에서 신청합니다.\n\n※ 시연용 안내입니다. 공식 기관에서 확인해 주세요.",
+        "link": ("안심상속 원스톱", URL_ONESTOP, "공식 조회 안내", LINK_DESC, [("금융거래 조회", URL_FSS)]),
+        "text": "주의: 기한·채무는 공식 자료로 확인하세요.\n\n안심상속 원스톱 서비스로 금융기관 예금·대출·보험, 국세·지방세, 자동차, 토지 정보를 한 번에 조회할 수 있습니다. 시·군·구청이나 주민센터, 정부24에서 신청합니다.\n\n※ 공식 기관에서 확인해 주세요.",
         "qr": [
             [
                 "상속세",
@@ -122,7 +142,9 @@ NODES = {
     },
     "tax": {
         "name": "상속세",
-        "text": "상속세는 사망일이 속한 달의 말일부터 6개월 이내에 신고·납부하는 것이 기본입니다. 상속재산 규모에 따라 신고 대상 여부가 달라지니 국세청에서 확인하세요.\n\n※ 시연용 안내입니다. 공식 기관에서 확인해 주세요.",
+        "link": ("상속세 일반 안내", URL_NTS_GENERAL, "국세청 상속세 안내", "상속세 신고·납부 기준은 국세청 공식 안내에서 확인하세요.",
+                 [("상속세 개요", URL_NTS_OVERVIEW), ("홈택스 상속세", URL_HOMETAX)]),
+        "text": "상속세는 사망일이 속한 달의 말일부터 6개월 이내에 신고·납부하는 것이 기본입니다. 상속재산 규모에 따라 신고 대상 여부가 달라지니 국세청에서 확인하세요.\n\n※ 공식 기관에서 확인해 주세요.",
         "qr": [
             [
                 "법령·시행일 확인",
@@ -140,7 +162,8 @@ NODES = {
     },
     "telecom": {
         "name": "통신·구독",
-        "text": "휴대전화·인터넷 명의 변경이나 해지, OTT·클라우드·쇼핑몰 정기결제 해지, 간편결제·포인트 정리를 확인하세요. 해지 전에 사진·문서 백업이 필요한지 가족과 상의하세요.",
+        "link": ("SKT 필요서류 안내", URL_SKT_DOCS, "통신사 안내", "LG U+는 안내 주소가 없습니다. 해당 통신사에 직접 확인하세요.", [("KT 해지 안내", URL_KT_GUIDE)]),
+        "text": "휴대전화·인터넷 명의 변경이나 해지, OTT·클라우드·쇼핑몰 정기결제 해지, 간편결제·포인트 정리를 확인하세요. 해지 전에 사진·문서 백업이 필요한지 가족과 상의하세요.\n\n통신사별 필요서류와 절차는 다르니 LG U+ 등 안내 주소가 없는 통신사는 해당 통신사에 직접 확인하세요.",
         "qr": [
             [
                 "금융·채무",
@@ -158,7 +181,8 @@ NODES = {
     },
     "law": {
         "name": "법령·시행일 확인",
-        "text": "상속 관련 법령은 개정될 수 있고, 이 시연 화면은 최신 법령을 조회하지 않습니다. 국가법령정보센터(law.go.kr)에서 현행 법령과 시행일을 확인하세요.\n\n※ 시연용 안내입니다. 공식 기관에서 확인해 주세요.",
+        "link": ("민법 원문", URL_CIVIL, "국가법령정보센터", "현행 법령과 시행일은 국가법령정보센터에서 확인하세요."),
+        "text": "상속 관련 법령은 개정될 수 있고, 이 시연 화면은 최신 법령을 조회하지 않습니다. 국가법령정보센터(law.go.kr)에서 현행 법령과 시행일을 확인하세요.\n\n※ 공식 기관에서 확인해 주세요.",
         "qr": [
             [
                 "상속세",
@@ -199,6 +223,10 @@ NODES = {
                 "sp_disq"
             ],
             [
+                "유류분",
+                "sp_reserve"
+            ],
+            [
                 "상속 절차 시작",
                 "start"
             ],
@@ -208,9 +236,20 @@ NODES = {
             ]
         ]
     },
+    "sp_reserve": {
+        "name": "특수_유류분",
+        "link": ("유류분 안내", URL_EASY_RESERVE, "유류분 공식 안내", LINK_DESC, [("민법 원문", URL_CIVIL)]),
+        "text": "유류분에 관한 내용은 아래 공식 안내에서 확인하세요.\n\n※ 공식 기관에서 확인해 주세요.",
+        "qr": [
+            ["다른 특수 상황", "sp"],
+            ["상속 절차 시작", "start"],
+            ["처음으로", "welcome"]
+        ]
+    },
     "sp_unborn": {
         "name": "특수_태아·대습상속",
-        "text": "태아: 상속이 시작될 때 태어나지 않았어도 이미 태어난 것으로 보아 상속인이 됩니다(민법 제1000조 제3항). 단, 살아서 태어나야 합니다.\n\n대습상속: 상속인이 될 자녀나 형제자매가 상속 개시 전에 사망했거나 결격·상속권 상실로 상속인이 되지 못하면, 그 사람의 직계비속과 배우자가 대신 상속인이 됩니다(제1001조). 예) 할아버지가 돌아가셨는데 아버지가 이미 돌아가셨다면 손자녀가 아버지 몫을 상속받습니다. 다만 결격으로 대습이 생긴 경우 그 사람의 배우자는 대습상속인이 될 수 없습니다.\n\n※ 시연용 안내입니다. 공식 기관에서 확인해 주세요.",
+        "link": ("민법 원문", URL_CIVIL, "공식 안내", LINK_DESC, [("상속분 산정 안내", URL_EASY_SHARE), ("상속의 효력 안내", URL_EASY_EFFECT)]),
+        "text": "태아: 상속이 시작될 때 태어나지 않았어도 이미 태어난 것으로 보아 상속인이 됩니다(민법 제1000조 제3항). 단, 살아서 태어나야 합니다.\n\n대습상속: 상속인이 될 자녀나 형제자매가 상속 개시 전에 사망했거나 결격·상속권 상실로 상속인이 되지 못하면, 그 사람의 직계비속과 배우자가 대신 상속인이 됩니다(제1001조). 예) 할아버지가 돌아가셨는데 아버지가 이미 돌아가셨다면 손자녀가 아버지 몫을 상속받습니다. 다만 결격으로 대습이 생긴 경우 그 사람의 배우자는 대습상속인이 될 수 없습니다.\n\n※ 공식 기관에서 확인해 주세요.",
         "qr": [
             [
                 "다른 특수 상황",
@@ -228,7 +267,8 @@ NODES = {
     },
     "sp_partner": {
         "name": "특수_사실혼·이혼",
-        "text": "사실혼 배우자는 상속인이 아닙니다. 혼인신고를 한 법률상 배우자만 상속인입니다(제1003조). 다만 상속인이 없으면 특별연고자로서 법원에 상속재산 분여를 청구할 수 있고(상속인수색 공고기간 만료 후 2개월 이내), 사실혼을 입증하면 유족연금을 받을 수 있습니다.\n\n이혼소송 중이라도 이혼이 확정되기 전에 사망했다면 배우자는 상속인입니다. 이미 이혼한 배우자는 상속인이 아닙니다.\n\n※ 시연용 안내입니다. 공식 기관에서 확인해 주세요.",
+        "link": ("민법 원문", URL_CIVIL, "공식 안내", LINK_DESC, [("상속분 산정 안내", URL_EASY_SHARE), ("상속의 효력 안내", URL_EASY_EFFECT)]),
+        "text": "사실혼 배우자는 상속인이 아닙니다. 혼인신고를 한 법률상 배우자만 상속인입니다(제1003조). 다만 상속인이 없으면 특별연고자로서 법원에 상속재산 분여를 청구할 수 있고(상속인수색 공고기간 만료 후 2개월 이내), 사실혼을 입증하면 유족연금을 받을 수 있습니다.\n\n이혼소송 중이라도 이혼이 확정되기 전에 사망했다면 배우자는 상속인입니다. 이미 이혼한 배우자는 상속인이 아닙니다.\n\n※ 공식 기관에서 확인해 주세요.",
         "qr": [
             [
                 "다른 특수 상황",
@@ -246,7 +286,8 @@ NODES = {
     },
     "sp_child": {
         "name": "특수_혼외자·양자",
-        "text": "혼외자: 아버지가 인지했거나 친생자관계가 확인되면 상속인입니다. 유언으로 인지한 경우도 포함됩니다.\n\n양자·친양자: 유효하게 입양했다면 직계비속으로 상속인이고, 양부모·친양부모도 상속인이 될 수 있습니다. 양자를 보낸 친생부모는 상속인이지만, 친양자를 보낸 친생부모는 상속인이 아닙니다. 유효하지 않은 입양은 상속인이 아닙니다.\n\n※ 시연용 안내입니다. 공식 기관에서 확인해 주세요.",
+        "link": ("민법 원문", URL_CIVIL, "공식 안내", LINK_DESC, [("상속분 산정 안내", URL_EASY_SHARE), ("상속의 효력 안내", URL_EASY_EFFECT)]),
+        "text": "혼외자: 아버지가 인지했거나 친생자관계가 확인되면 상속인입니다. 유언으로 인지한 경우도 포함됩니다.\n\n양자·친양자: 유효하게 입양했다면 직계비속으로 상속인이고, 양부모·친양부모도 상속인이 될 수 있습니다. 양자를 보낸 친생부모는 상속인이지만, 친양자를 보낸 친생부모는 상속인이 아닙니다. 유효하지 않은 입양은 상속인이 아닙니다.\n\n※ 공식 기관에서 확인해 주세요.",
         "qr": [
             [
                 "다른 특수 상황",
@@ -264,7 +305,8 @@ NODES = {
     },
     "sp_foreign": {
         "name": "특수_외국인·북한",
-        "text": "외국 국적을 가진 상속인과 북한에 있는 상속인도 상속인이 될 수 있습니다.\n\n다만 고인(피상속인)이 외국인이면 상속인·순위·상속분이 고인의 본국법으로 정해집니다(국제사법 제77조 제1항). 외국에 재산이 있거나 외국에 사는 상속인이 있으면 재판 관할 문제가 생길 수 있어 전문가 상담을 권합니다.\n\n※ 시연용 안내입니다. 공식 기관에서 확인해 주세요.",
+        "link": ("상속분 산정 안내", URL_EASY_SHARE, "공식 안내", LINK_DESC, [("상속의 효력 안내", URL_EASY_EFFECT)]),
+        "text": "외국 국적을 가진 상속인과 북한에 있는 상속인도 상속인이 될 수 있습니다.\n\n다만 고인(피상속인)이 외국인이면 상속인·순위·상속분이 고인의 본국법으로 정해집니다(국제사법 제77조 제1항). 외국에 재산이 있거나 외국에 사는 상속인이 있으면 재판 관할 문제가 생길 수 있어 전문가 상담을 권합니다.\n\n※ 공식 기관에서 확인해 주세요.",
         "qr": [
             [
                 "다른 특수 상황",
@@ -282,7 +324,8 @@ NODES = {
     },
     "sp_disq": {
         "name": "특수_상속결격·상실",
-        "text": "상속결격: 고의로 피상속인이나 선순위·동순위 상속인을 살해했거나 살해하려 한 경우, 유언서를 위조·변조·파기·은닉한 경우 등(민법 제1004조)에는 상속인이 될 수 없습니다.\n\n상속권 상실: 부양의무를 중대하게 위반하는 등의 사유가 있으면 고인의 공정증서 유언 또는 공동상속인의 가정법원 청구(그 사람이 상속인이 되었음을 안 날부터 6개월 이내)로 상속권을 잃을 수 있습니다(제1004조의2). 부양을 소홀히 했다는 이유만으로 자동으로 결격이 되지는 않습니다.\n\n※ 시연용 안내입니다. 공식 기관에서 확인해 주세요.",
+        "link": ("민법 원문", URL_CIVIL, "공식 안내", LINK_DESC, [("상속분 산정 안내", URL_EASY_SHARE), ("상속의 효력 안내", URL_EASY_EFFECT)]),
+        "text": "상속결격: 고의로 피상속인이나 선순위·동순위 상속인을 살해했거나 살해하려 한 경우, 유언서를 위조·변조·파기·은닉한 경우 등(민법 제1004조)에는 상속인이 될 수 없습니다.\n\n상속권 상실: 부양의무를 중대하게 위반하는 등의 사유가 있으면 고인의 공정증서 유언 또는 공동상속인의 가정법원 청구(그 사람이 상속인이 되었음을 안 날부터 6개월 이내)로 상속권을 잃을 수 있습니다(제1004조의2). 부양을 소홀히 했다는 이유만으로 자동으로 결격이 되지는 않습니다.\n\n※ 공식 기관에서 확인해 주세요.",
         "qr": [
             [
                 "다른 특수 상황",
@@ -300,7 +343,8 @@ NODES = {
     },
     "proc": {
         "name": "절차 핵심 안내",
-        "text": "주의: 신청 가능 여부와 기한은 상황에 따라 다릅니다.\n\n상속포기·한정승인 핵심 절차\n1. 재산·채무 조사: 안심상속 원스톱 서비스로 금융·세금 정보를 확인합니다.\n2. 선택 판단: 그대로 받을지, 재산 범위 안에서만 빚을 갚을지(한정승인), 모두 포기할지 정합니다.\n3. 법원 신고: 상속이 시작된 것을 안 날부터 3개월 이내에 가정법원에 신고합니다.\n4. 기한이 지났다면 전문가 상담을 권합니다.\n\n※ 시연용 안내입니다. 공식 기관에서 확인해 주세요.",
+        "link": ("포기·한정승인 안내", URL_EASYLAW, "공식 안내", LINK_DESC),
+        "text": "주의: 신청 가능 여부와 기한은 상황에 따라 다릅니다.\n\n상속포기·한정승인 핵심 절차\n1. 재산·채무 조사: 안심상속 원스톱 서비스로 금융·세금 정보를 확인합니다.\n2. 선택 판단: 그대로 받을지, 재산 범위 안에서만 빚을 갚을지(한정승인), 모두 포기할지 정합니다.\n3. 법원 신고: 상속이 시작된 것을 안 날부터 3개월 이내에 가정법원에 신고합니다.\n4. 기한이 지났다면 전문가 상담을 권합니다.\n\n※ 공식 기관에서 확인해 주세요.",
         "qr": [
             [
                 "금융·채무",
@@ -318,7 +362,8 @@ NODES = {
     },
     "checklist": {
         "name": "기본 체크리스트",
-        "text": "주의: 기한·채무는 공식 자료로 확인하세요.\n\n기본 체크리스트\n1. 상속인 확인 (가족관계증명서)\n2. 재산·채무 조사 (안심상속 원스톱 서비스)\n3. 상속포기·한정승인 판단 (3개월)\n4. 상속세 신고·납부 (6개월)\n5. 상속재산 명의 변경 (상속등기 등)\n\n※ 시연용 안내입니다. 공식 기관에서 확인해 주세요.",
+        "link": ("가족관계증명서", URL_FAMILY_REL, "공식 신청·확인 링크", LINK_DESC, [("사망신고", URL_DEATH_REPORT), ("안심상속", URL_ONESTOP_PORTAL)]),
+        "text": "주의: 기한·채무는 공식 자료로 확인하세요.\n\n기본 체크리스트\n1. 상속인 확인 (가족관계증명서)\n2. 재산·채무 조사 (안심상속 원스톱 서비스)\n3. 상속포기·한정승인 판단 (3개월)\n4. 상속세 신고·납부 (6개월)\n5. 상속재산 명의 변경 (상속등기 등)\n\n※ 공식 기관에서 확인해 주세요.",
         "qr": [
             [
                 "상속인 확인",
@@ -367,6 +412,7 @@ KEYWORDS = [
     (re.compile(r"혼외|입양|양자|인지"), "sp_child"),
     (re.compile(r"외국|북한|국적"), "sp_foreign"),
     (re.compile(r"결격|상속권\s*상실|불효"), "sp_disq"),
+    (re.compile(r"유류분"), "sp_reserve"),
     (re.compile(r"특수|예외"), "sp"),
     (re.compile(r"법령|시행|개정|법률"), "law"),
     (re.compile(r"위험|처분|인출|주의"), "risk"),
@@ -419,17 +465,21 @@ def reply(text, labels, link=None):
 
 def node_reply(node_id):
     node = NODES[node_id]
-    return reply(node["text"], [q[0] for q in node["qr"]])
+    return reply(node["text"], [q[0] for q in node["qr"]], link=node.get("link"))
 
 
 def build(res: dict) -> dict:
     outputs = res.get("parts") or [{"simpleText": {"text": res["text"]}}]
     if res.get("link"):
-        label, url = res["link"]
+        label, url = res["link"][0], res["link"][1]
+        title = res["link"][2] if len(res["link"]) > 2 else "웹 체크리스트"
+        desc = res["link"][3] if len(res["link"]) > 3 else "카카오톡에서 답한 내용을 웹에서 이어서 볼 수 있어요."
         outputs.append({"textCard": {
-            "title": "웹 체크리스트",
-            "description": "카카오톡에서 답한 내용을 웹에서 이어서 볼 수 있어요.",
-            "buttons": [{"action": "webLink", "label": label, "webLinkUrl": url}],
+            "title": title[:50],
+            "description": desc[:128],
+            "buttons": [{"action": "webLink", "label": label, "webLinkUrl": url}]
+                       + [{"action": "webLink", "label": l2, "webLinkUrl": u2}
+                          for l2, u2 in (res["link"][4] if len(res["link"]) > 4 else [])][:2],
         }})
     return {
         "version": "2.0",
@@ -501,6 +551,18 @@ def risk_answer_text(key, value):
     if value in ("yes", "unknown") and key in WARNING_TEXTS:
         return WARNING_TEXTS[key] + "\n\n" + COMMON_WARNING
     return COMMON_WARNING
+
+
+# 경고 문구와 함께 보여 줄 공식 링크 (경고가 나올 때만: 있음·모름)
+RISK_LINKS = {
+    "debt": ("안심상속 원스톱", URL_ONESTOP, "공식 조회 안내", LINK_DESC, [("금융거래 조회", URL_FSS)]),
+    "property_disposal": ("안심상속 원스톱", URL_ONESTOP, "공식 조회 안내", LINK_DESC, [("금융거래 조회", URL_FSS)]),
+    "self_application": ("포기·한정승인 안내", URL_EASYLAW, "공식 안내", LINK_DESC),
+}
+
+
+def risk_link(key, value):
+    return RISK_LINKS.get(key) if value in ("yes", "unknown") else None
 
 
 async def call_backend(path, payload, secret=False):
@@ -639,7 +701,8 @@ async def handle(s: dict, utterance: str, block_name: str):
         if value:
             s["answers"]["riskAnswers"][rkey] = value
             s["step"] = "result"
-            return reply(risk_answer_text(rkey, value), ["다른 질문 확인", "웹 체크리스트에서 보기", "처음으로"]), "risk_answered"
+            return reply(risk_answer_text(rkey, value), ["다른 질문 확인", "웹 체크리스트에서 보기", "처음으로"],
+                         link=risk_link(rkey, value)), "risk_answered"
         if key == norm("다른 질문 확인"):
             s["step"] = "result"
             return risk_menu(s), "risk_menu"
