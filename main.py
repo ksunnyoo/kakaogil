@@ -44,6 +44,12 @@ API_TIMEOUT = 3.0       # 카카오 응답 제한 5초 안에 끝내기 위한 �
 
 COMMON_WARNING = "주의: 기한·채무는 공식 자료로 확인하세요."
 LEGAL_NOTE = "법적 영향은 대한법률구조공단에 상담하세요."
+# 고지 문구 (초안: 팀 확인 전). 법률 자문·변호사 상담을 대체하지 않음을 알린다.
+DISCLAIMER_FULL = ("이 서비스는 법률 자문이나 변호사 상담을 대체하지 않습니다. "
+                   "상속 절차에 대한 일반적인 사전 상식을 익히기 위한 안내입니다. "
+                   "개별 사안의 판단은 대한법률구조공단 등 전문가에게 상담하세요.")
+DISCLAIMER_SHORT = "※ 법률 자문·변호사 상담을 대체하지 않는 일반 안내입니다."
+
 FALLBACK_TEXT = "아직 이해하지 못했어요. 아래 메뉴에서 골라 주세요.\n\n" + COMMON_WARNING
 ERROR_TEXT = "안내를 불러오지 못했습니다.\n\n" + COMMON_WARNING
 
@@ -66,6 +72,30 @@ RISKS = [  # [키, 버튼 문구, 질문 문장]
     ["property_disposal", "재산 처분·사용", "사망 후 고인의 재산이 처분되거나 사용된 사실을 알고 있나요?\n(본인이 아닌 다른 사람의 행동도 포함합니다)"],
     ["self_application", "본인 신청", "본인이 상속포기 또는 한정승인을 신청했나요?\n(다른 상속인의 신청은 포함하지 않습니다)"],
 ]
+
+# 절차 8개 (고정). 내용은 procedures.py (김현주 W-04 공식 안내 원고 p01~p08).
+# A07(GET /api/procedures) 배포 후에는 백엔드 호출로 교체 예정 (결정 D3).
+from procedures import PROCEDURES as _PROCS, render_detail
+
+PROCEDURES = [[p["id"], p["title"], p["summary"]] for p in _PROCS]
+PROC_BY_ID = {p["id"]: p for p in _PROCS}
+
+
+def procedure_cards():
+    return {"carousel": {"type": "textCard", "items": [
+        {"title": t, "description": d,
+         "buttons": [{"action": "message", "label": "자세히 보기", "messageText": f"절차 {t}"}]}
+        for _k, t, d in PROCEDURES]}}
+
+
+def procedure_detail(utterance):
+    key = norm(utterance)
+    for pid, title, desc in PROCEDURES:
+        if key == norm(f"절차 {title}"):
+            text = render_detail(PROC_BY_ID[pid]) + "\n\n" + DISCLAIMER_SHORT
+            return reply(text[:1000], ["절차 목록 보기", "추가 위험 확인", "웹 체크리스트에서 보기", "처음으로"])
+    return None
+
 
 # ---------------------------------------------------------------
 # 2) 안내 블록: 기존 시연용 문구. 검수된 문구로 교체 전까지 "시연용" 표시 유지
@@ -316,7 +346,7 @@ NODES = {
 
 NODES["welcome"] = {
     "name": "웰컴 블록",
-    "text": "안녕하세요. 상속 길잡이입니다.\n\n가족의 사망 이후 필요한 절차를 확인하도록 도와드리겠습니다.\n\n어떤 내용이 궁금하신가요?",
+    "text": "안녕하세요. 상속 길잡이입니다.\n\n가족의 사망 이후 필요한 절차를 확인하도록 도와드리겠습니다.\n\n어떤 내용이 궁금하신가요?\n\n" + DISCLAIMER_FULL,
     "qr": [["상속 절차 시작", "start"], ["기본 체크리스트", "checklist"], ["금융·채무", "finance"],
            ["상속세", "tax"], ["통신·구독", "telecom"], ["위험 행동 확인", "risk"], ["법령·시행일 확인", "law"]],
 }
@@ -393,7 +423,7 @@ def node_reply(node_id):
 
 
 def build(res: dict) -> dict:
-    outputs = [{"simpleText": {"text": res["text"]}}]
+    outputs = res.get("parts") or [{"simpleText": {"text": res["text"]}}]
     if res.get("link"):
         label, url = res["link"]
         outputs.append({"textCard": {
@@ -484,21 +514,22 @@ async def call_backend(path, payload, secret=False):
     return None
 
 
+def result_reply():
+    """결과 순서(협의 12): 위험 경고 -> 절차 목록(카드 8개) -> 추가 확인. 말풍선 3개."""
+    labels = ["추가 위험 확인", "웹 체크리스트에서 보기", "처음으로"]
+    parts = [
+        {"simpleText": {"text": COMMON_WARNING}},
+        procedure_cards(),
+        {"simpleText": {"text": "추가로 확인하고 싶은 위험이 있다면 [추가 위험 확인]을 눌러 주세요. 선택 사항이에요.\n\n" + DISCLAIMER_SHORT}},
+    ]
+    r = reply(COMMON_WARNING, labels)
+    r["parts"] = parts
+    return r
+
+
 async def show_result(s):
-    a = s["answers"]
-    data = await call_backend(RECOMMEND_PATH, a) if USE_RECOMMEND else None
-    labels = ["추가 위험 확인", "웹 체크리스트에서 보기", "기본 체크리스트", "처음으로"]
-    recs = (data or {}).get("recommendations") if isinstance(data, dict) else None
-    if recs:
-        # TODO: 응답 필드 이름은 김현주 님과 확정 후 맞춤
-        lines = [COMMON_WARNING, "", "먼저 확인하면 좋은 절차예요."]
-        for i, r in enumerate(recs[:5], 1):
-            title = r.get("title") or r.get("procedureName") or r.get("procedureId") or "절차"
-            why = r.get("reason", "")
-            lines.append(f"{i}. {title}" + (f" - {why}" if why else ""))
-        return reply("\n".join(lines), labels)
-    # 백엔드 추천이 아직 없을 때: 임시 기본 체크리스트
-    return reply(NODES["checklist"]["text"], labels)
+    # 추천 기능은 제외(A-01): 고정 절차 8개를 보여줍니다. 백엔드 목록 API는 D3~D7 보류.
+    return result_reply()
 
 
 def handoff_body(a):
@@ -555,6 +586,13 @@ async def handle(s: dict, utterance: str, block_name: str):
         return prompt_current(s), "retry"
 
     step = s["step"]
+
+    # --- 절차 카드 (K-04) ---
+    if key == norm("절차 목록 보기"):
+        return result_reply(), "proc_list"
+    detail = procedure_detail(utterance)
+    if detail:
+        return detail, "proc_detail"
 
     # --- K-01 질문 3개 ---
     if step == "relation":
