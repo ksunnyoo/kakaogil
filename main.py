@@ -567,8 +567,17 @@ def risk_link(key, value):
     return RISK_LINKS.get(key) if value in ("yes", "unknown") else None
 
 
-KEEPALIVE_SECONDS = 120.0  # 사용자가 마지막으로 누른 뒤 이 시간 동안 백엔드를 계속 깨워 둔다
-KEEPALIVE_EVERY = 10.0     # 깨우기 요청 간격(초). 백엔드는 20~40초 쉬면 꺼진다(2026-10-28 측정)
+def _env_float(name, default):
+    try:
+        return float(os.getenv(name, default))
+    except ValueError:
+        return float(default)
+
+
+# 사용자가 마지막으로 누른 뒤 이 시간(초) 동안 백엔드를 계속 깨워 둔다. 0이면 누를 때 1번만 깨운다.
+# Vercel 무료 한도(Active CPU 4시간)를 아끼려면 Render 환경변수 KEEPALIVE_SECONDS=0 으로 줄인다.
+KEEPALIVE_SECONDS = _env_float("KEEPALIVE_SECONDS", 120.0)
+KEEPALIVE_EVERY = _env_float("KEEPALIVE_EVERY", 10.0)  # 깨우기 간격(초). 백엔드는 20~40초 쉬면 꺼진다(2026-10-28 측정)
 WARM_TIMEOUT = 30.0        # 깨우기 요청은 응답을 끝까지 기다린다(콜드 스타트 14~21초)
 _last_user = 0.0
 _keepalive_task = None
@@ -590,8 +599,10 @@ async def _ping():
 async def _keepalive_loop():
     global _keepalive_task
     try:
-        while time.monotonic() - _last_user < KEEPALIVE_SECONDS:
+        while True:
             await _ping()
+            if time.monotonic() - _last_user >= KEEPALIVE_SECONDS:
+                break
             await asyncio.sleep(KEEPALIVE_EVERY)
     finally:
         _keepalive_task = None
