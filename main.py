@@ -454,6 +454,7 @@ def get_session(uid: str) -> dict:
 def reset(s: dict):
     s["step"] = None
     s["answers"] = {"riskAnswers": {}}
+    s.pop("retry", None)
 
 
 # ---------------------------------------------------------------
@@ -616,10 +617,12 @@ async def web_link(s):
     data = await call_backend(HANDOFF_PATH, handoff_body(s["answers"]), secret=True)
     token = (data or {}).get("token") if isinstance(data, dict) else None
     if token:
+        s.pop("retry", None)
         url = f"{FRONTEND_ORIGIN}{HANDOFF_WEB_PATH}?{HANDOFF_QUERY_KEY}={token}"
         return reply("아래 버튼을 누르면 웹에서 같은 답으로 이어서 볼 수 있어요. 링크는 10분 동안, 한 번만 열려요.",
                      ["처음으로"], link=("웹 체크리스트에서 보기", url))
     # D-15: 연결 실패 시 웹은 처음부터 시작
+    s["retry"] = "link"  # [다시 시도]가 링크 발급만 다시 하도록 기억해 둔다
     return reply("답변을 웹으로 넘기지 못했어요. 웹에서는 처음부터 시작해 주세요.",
                  ["다시 시도", "처음으로"], link=("웹에서 시작하기", FRONTEND_ORIGIN))
 
@@ -647,7 +650,8 @@ async def handle(s: dict, utterance: str, block_name: str):
         reset(s)
         return node_reply(HOME), "welcome"
     if key == norm("다시 시도"):
-        if s["step"] is None and s["answers"].get("relation"):
+        if s.get("retry") == "link" and s["answers"].get("relation"):
+            s.pop("retry", None)
             return await web_link(s), "retry_link"
         return prompt_current(s), "retry"
 
