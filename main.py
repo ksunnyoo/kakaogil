@@ -19,6 +19,7 @@
   DEATH_INPUT_MODE       date(기본, 날짜 입력) 또는 period(기간 버튼)
   USE_RECOMMEND          1이면 백엔드 추천 API 호출(기본 0: 제외됨, 고정 기본 체크리스트 표시)
 """
+import asyncio
 import os
 import re
 import time
@@ -566,6 +567,37 @@ def risk_link(key, value):
     return RISK_LINKS.get(key) if value in ("yes", "unknown") else None
 
 
+WARM_INTERVAL = 8.0     # 백엔드 깨우기 요청 사이 최소 간격(초)
+WARM_TIMEOUT = 30.0     # 깨우기 요청은 응답을 끝까지 기다린다(백엔드 콜드 스타트 14~21초)
+_last_warm = 0.0
+_warm_tasks = set()
+
+
+async def _ping():
+    """백엔드 /health를 호출해 꺼져 있던 서버를 깨운다. 값·토큰은 보내지 않고 상태만 로그에 남긴다."""
+    t0 = time.monotonic()
+    try:
+        async with httpx.AsyncClient(timeout=WARM_TIMEOUT) as client:
+            r = await client.get(STARTER_KIT_API_URL + "/health")
+        print(f"[warm] status={r.status_code} sec={time.monotonic() - t0:.1f}", flush=True)
+    except Exception as e:
+        print(f"[warm] error={type(e).__name__}", flush=True)
+
+
+def warm_backend():
+    """대화 중 사용자가 누를 때마다 백엔드를 미리 깨워, 마지막 [웹 체크리스트에서 보기] 때는 켜져 있게 한다."""
+    global _last_warm
+    if not STARTER_KIT_API_URL:
+        return
+    now = time.monotonic()
+    if now - _last_warm < WARM_INTERVAL:
+        return
+    _last_warm = now
+    task = asyncio.create_task(_ping())
+    _warm_tasks.add(task)
+    task.add_done_callback(_warm_tasks.discard)
+
+
 async def call_backend(path, payload, secret=False):
     if not STARTER_KIT_API_URL:
         return None
@@ -751,6 +783,7 @@ async def skill(request: Request):
         block_name = (user_request.get("block") or {}).get("name", "")
         uid = (user_request.get("user") or {}).get("id", "") or "anonymous"
         s = get_session(uid)
+        warm_backend()
         res, tag = await handle(s, utterance, block_name)
         # 개인정보 정책: 사용자 입력 문장·식별값·답변 값은 로그에 남기지 않고 단계 이름만 남깁니다.
         print(f"[skill] step={s['step']} node={tag}", flush=True)
